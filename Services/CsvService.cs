@@ -34,21 +34,15 @@ namespace CSV_GeradorEEditor.Services
 
             if (linhas.Length == 0) return;
 
-            // O cabeçalho é lido apenas como a primeira linha puramente visual
-            var cabecalhosRaw = linhas[0].Split(',');
-            for (int i = 0; i < cabecalhosRaw.Length; i++)
+            // Sem invenções: cria colunas genéricas baseadas na quantidade de itens da linha 1
+            int qtdColunas = linhas[0].Split(',').Length;
+            for (int i = 0; i < qtdColunas; i++)
             {
-                string colName = string.IsNullOrWhiteSpace(cabecalhosRaw[i]) ? $"Coluna_{i + 1}" : cabecalhosRaw[i];
-
-                // Evita crash se o usuário importar CSV com colunas de mesmo nome
-                int count = 1;
-                string uniqueName = colName;
-                while (colunas.Contains(uniqueName)) { uniqueName = $"{colName}_{count++}"; }
-                colunas.Add(uniqueName);
+                colunas.Add((i + 1).ToString());
             }
 
-            // Os dados começam da linha 1 em diante
-            for (int i = 1; i < linhas.Length; i++)
+            // A linha 1 não é especial. Tudo é dado.
+            for (int i = 0; i < linhas.Length; i++)
             {
                 if (string.IsNullOrWhiteSpace(linhas[i])) continue;
                 dados.Add(linhas[i].Split(','));
@@ -58,21 +52,25 @@ namespace CSV_GeradorEEditor.Services
         public List<RegistroPassante> ImportarTipadoPassante(string caminho)
         {
             var lista = new List<RegistroPassante>();
-            var linhas = File.ReadAllLines(caminho, Encoding.UTF8).Skip(1);
+            var linhas = File.ReadAllLines(caminho, Encoding.UTF8);
 
             foreach (var linha in linhas)
             {
                 if (string.IsNullOrWhiteSpace(linha)) continue;
+
+                // Se a linha contiver as palavras abaixo, aí sim é o título antigo e nós ignoramos
+                if (linha.ToUpper().Contains("PLACA") && linha.ToUpper().Contains("PORTICO")) continue;
+
                 var colunas = linha.Split(',');
                 lista.Add(new RegistroPassante
                 {
-                    Placa = colunas[0],
-                    Data = colunas[1],
-                    Hora = colunas[2],
-                    Portico = colunas[3],
-                    Categoria = int.TryParse(colunas[4], out int cat) ? cat : 1,
-                    Sentido = colunas[5],
-                    Tarifa = double.TryParse(colunas[6], NumberStyles.Any, CultureInfo.InvariantCulture, out double tar) ? tar : 0
+                    Placa = colunas.Length > 0 ? colunas[0] : "",
+                    Data = colunas.Length > 1 ? colunas[1] : "",
+                    Hora = colunas.Length > 2 ? colunas[2] : "",
+                    Portico = colunas.Length > 3 ? colunas[3] : "",
+                    Categoria = colunas.Length > 4 && int.TryParse(colunas[4], out int cat) ? cat : 1,
+                    Sentido = colunas.Length > 5 ? colunas[5] : "",
+                    Tarifa = colunas.Length > 6 && double.TryParse(colunas[6], NumberStyles.Any, CultureInfo.InvariantCulture, out double tar) ? tar : 0
                 });
             }
             return lista;
@@ -81,27 +79,31 @@ namespace CSV_GeradorEEditor.Services
         public List<RegistroPagamento> ImportarTipadoPagamento(string caminho)
         {
             var lista = new List<RegistroPagamento>();
-            var linhas = File.ReadAllLines(caminho, Encoding.UTF8).Skip(1);
+            var linhas = File.ReadAllLines(caminho, Encoding.UTF8);
 
             foreach (var linha in linhas)
             {
                 if (string.IsNullOrWhiteSpace(linha)) continue;
+
+                if (linha.ToUpper().Contains("PLACA") && linha.ToUpper().Contains("PORTICO")) continue;
+
                 var colunas = linha.Split(',');
                 var pag = new RegistroPagamento
                 {
-                    Placa = colunas[0],
-                    Data = colunas[1],
-                    Hora = colunas[2],
-                    Portico = colunas[3],
-                    Categoria = int.TryParse(colunas[4], out int cat) ? cat : 1,
-                    Sentido = colunas[5],
-                    Tarifa = double.TryParse(colunas[6], NumberStyles.Any, CultureInfo.InvariantCulture, out double tar) ? tar : 0
+                    Placa = colunas.Length > 0 ? colunas[0] : "",
+                    Data = colunas.Length > 1 ? colunas[1] : "",
+                    Hora = colunas.Length > 2 ? colunas[2] : "",
+                    Portico = colunas.Length > 3 ? colunas[3] : "",
+                    Categoria = colunas.Length > 4 && int.TryParse(colunas[4], out int cat) ? cat : 1,
+                    Sentido = colunas.Length > 5 ? colunas[5] : "",
+                    Tarifa = colunas.Length > 6 && double.TryParse(colunas[6], NumberStyles.Any, CultureInfo.InvariantCulture, out double tar) ? tar : 0
                 };
                 if (colunas.Length > 7)
                 {
-                    pag.DataPagamento = colunas[7]; pag.HoraPagamento = colunas[8];
-                    pag.Acrescimo = double.TryParse(colunas[9], NumberStyles.Any, CultureInfo.InvariantCulture, out double acr) ? acr : (double?)null;
-                    pag.ValorTotal = double.TryParse(colunas[10], NumberStyles.Any, CultureInfo.InvariantCulture, out double tot) ? tot : (double?)null;
+                    pag.DataPagamento = colunas[7];
+                    pag.HoraPagamento = colunas.Length > 8 ? colunas[8] : "";
+                    pag.Acrescimo = colunas.Length > 9 && double.TryParse(colunas[9], NumberStyles.Any, CultureInfo.InvariantCulture, out double acr) ? acr : (double?)null;
+                    pag.ValorTotal = colunas.Length > 10 && double.TryParse(colunas[10], NumberStyles.Any, CultureInfo.InvariantCulture, out double tot) ? tot : (double?)null;
                 }
                 lista.Add(pag);
             }

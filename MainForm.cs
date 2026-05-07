@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
+using System.Data;
 using System.Drawing;
 using System.Globalization;
 using System.Linq;
@@ -13,10 +15,12 @@ namespace CSV_GeradorEEditor
 {
     public partial class MainForm : Form
     {
+        // Instâncias dos serviços
         private GeradorDadosService _geradorService;
         private ProcessadorArquivosService _processadorService;
         private CsvService _csvService;
 
+        // Armazenamento em memória do fluxo padrão
         private List<RegistroPassante> _passantes;
         private List<RegistroPassante> _inadimplentes;
         private List<RegistroPassante> _daerNaoFiltrado;
@@ -24,13 +28,13 @@ namespace CSV_GeradorEEditor
         private List<RegistroPassante> _daer;
         private List<RegistroPagamento> _pagamentos;
 
-        private object _listaAtualExibicao;
-        private PropertyInfo[] _propriedadesAtuais;
-
-        // Estrutura de altíssima performance para o Modo Livre
+        // Armazenamento para o Modo de Edição Livre
         private List<string[]> _dadosLivres;
         private List<string> _colunasLivres;
 
+        // Estado e Controles
+        private object _listaAtualExibicao;
+        private PropertyInfo[] _propriedadesAtuais;
         private string _nomeArquivoSugerido = "PASSANTES.csv";
         private bool _modoEdicaoLivre = false;
 
@@ -41,6 +45,7 @@ namespace CSV_GeradorEEditor
         private Label _lblStatus;
         private FlowLayoutPanel _panelBotoesFluxo;
 
+        private GroupBox _grpRecorte;
         private ComboBox _cmbColunaData;
         private DateTimePicker _dtpInicio;
         private DateTimePicker _dtpFim;
@@ -48,21 +53,62 @@ namespace CSV_GeradorEEditor
         public MainForm()
         {
             InitializeComponent();
+
             _geradorService = new GeradorDadosService();
             _processadorService = new ProcessadorArquivosService();
             _csvService = new CsvService();
+
             ConfigurarInterface();
         }
 
-        // --- GERAÇÃO DE DADOS ---
+        // --- SISTEMA ---
+
+        private void BtnReset_Click(object sender, EventArgs e)
+        {
+            var result = MessageBox.Show("Tem certeza que deseja voltar ao estado inicial? Todos os dados não salvos na tela atual e em etapas anteriores serão perdidos da memória.", "Confirmar Reinício", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+
+            if (result == DialogResult.Yes)
+            {
+                _passantes = null;
+                _inadimplentes = null;
+                _daerNaoFiltrado = null;
+                _rejeitados = null;
+                _daer = null;
+                _pagamentos = null;
+
+                _dadosLivres = null;
+                _colunasLivres = null;
+
+                _listaAtualExibicao = null;
+                _propriedadesAtuais = null;
+
+                _dataGridView.Columns.Clear();
+                _dataGridView.RowCount = 0;
+                _dataGridView.Invalidate();
+
+                _cmbColunaData.Items.Clear();
+                _chkColunasVazias.Checked = false;
+                _chkComCabecalho.Checked = true;
+
+                HabilitarModoLivre(false);
+                _nomeArquivoSugerido = "PASSANTES.csv";
+
+                TravarInterface(false);
+                _lblStatus.Text = "Sistema reiniciado. Aguardando novos dados.";
+            }
+        }
+
+        // --- MÉTODOS DE GERAÇÃO (FLUXO PRINCIPAL) ---
 
         private async void BtnGerarPassantes_Click(object sender, EventArgs e)
         {
             int qtd = SolicitarQuantidade("Gerar PASSANTES (Max: 10.000.000)", 10000000, 0);
             if (qtd <= 0) return;
 
-            TravarInterface(true); _lblStatus.Text = "Gerando Passantes...";
+            TravarInterface(true);
+            _lblStatus.Text = "Utilizando threads para gerar dados...";
             var progresso = new Progress<int>(p => _progressBar.Value = p);
+
             _passantes = await Task.Run(() => _geradorService.GerarPassantes(qtd, progresso));
             ConfigurarExibicao("PASSANTES.csv", _passantes);
             TravarInterface(false);
@@ -71,10 +117,10 @@ namespace CSV_GeradorEEditor
         private async void BtnGerarInadimplentes_Click(object sender, EventArgs e)
         {
             if (_passantes == null) { MessageBox.Show("Gere ou Importe os PASSANTES primeiro."); return; }
-            int qtd = SolicitarQuantidade($"INADIMPLENTES a gerar:", _passantes.Count, _passantes.Count);
+            int qtd = SolicitarQuantidade("INADIMPLENTES a gerar:", _passantes.Count, _passantes.Count);
             if (qtd <= 0) return;
 
-            TravarInterface(true); _lblStatus.Text = "Processando Inadimplentes...";
+            TravarInterface(true);
             _inadimplentes = await Task.Run(() => _geradorService.GerarSubconjunto(_passantes, qtd));
             ConfigurarExibicao("INADIMPLENTES.csv", _inadimplentes);
             TravarInterface(false);
@@ -89,8 +135,8 @@ namespace CSV_GeradorEEditor
 
         private async void BtnGerarRejeitados_Click(object sender, EventArgs e)
         {
-            if (_daerNaoFiltrado == null) { MessageBox.Show("Gere ou Importe o DAER Não Filtrado primeiro."); return; }
-            int qtd = SolicitarQuantidade($"REJEITADOS DAER a gerar:", _daerNaoFiltrado.Count, _daerNaoFiltrado.Count);
+            if (_daerNaoFiltrado == null) { MessageBox.Show("Gere o DAER Não Filtrado primeiro."); return; }
+            int qtd = SolicitarQuantidade("REJEITADOS DAER a gerar:", _daerNaoFiltrado.Count, _daerNaoFiltrado.Count);
             if (qtd <= 0) return;
 
             TravarInterface(true);
@@ -110,8 +156,8 @@ namespace CSV_GeradorEEditor
 
         private async void BtnGerarPagamentos_Click(object sender, EventArgs e)
         {
-            if (_daer == null) { MessageBox.Show("Gere ou Importe o DAER final primeiro."); return; }
-            int qtd = SolicitarQuantidade($"PAGAMENTOS a gerar:", _daer.Count, _daer.Count);
+            if (_daer == null) { MessageBox.Show("Gere o DAER final primeiro."); return; }
+            int qtd = SolicitarQuantidade("PAGAMENTOS a gerar:", _daer.Count, _daer.Count);
             if (qtd <= 0) return;
 
             TravarInterface(true);
@@ -123,7 +169,7 @@ namespace CSV_GeradorEEditor
 
         private async void BtnPreencherPagamentos_Click(object sender, EventArgs e)
         {
-            if (_pagamentos == null || _modoEdicaoLivre) { MessageBox.Show("Você precisa estar na etapa original de PAGAMENTOS."); return; }
+            if (_pagamentos == null || _modoEdicaoLivre) { MessageBox.Show("Opção válida apenas no fluxo original de PAGAMENTOS."); return; }
             TravarInterface(true);
             var progresso = new Progress<int>(p => _progressBar.Value = p);
             await Task.Run(() => _geradorService.PreencherPagamentosVazios(_pagamentos, progresso));
@@ -131,7 +177,7 @@ namespace CSV_GeradorEEditor
             TravarInterface(false);
         }
 
-        // --- IMPORTAÇÃO E EXPORTAÇÃO (WYSIWYG) ---
+        // --- IMPORTAÇÃO E EXPORTAÇÃO ---
 
         private async void BtnImportar_Click(object sender, EventArgs e)
         {
@@ -139,17 +185,16 @@ namespace CSV_GeradorEEditor
             {
                 if (ofd.ShowDialog() == DialogResult.OK)
                 {
-                    Form dialogo = new Form() { Width = 400, Height = 250, Text = "Selecione o Fluxo", StartPosition = FormStartPosition.CenterScreen };
-                    ComboBox cmbFluxo = new ComboBox() { Left = 20, Top = 20, Width = 340, DropDownStyle = ComboBoxStyle.DropDownList };
-                    cmbFluxo.Items.AddRange(new string[] { "1 - PASSANTES", "2 - INADIMPLENTES", "3 - DAER Não Filtrado", "4 - REJEITADOS DAER", "5 - DAER", "6 - PAGAMENTOS", "7 - MODO LIVRE (Para edições e imports genéricos)" });
-                    cmbFluxo.SelectedIndex = 6; // Sugere modo livre
-                    Button btnConfirmar = new Button() { Text = "Importar", Left = 130, Top = 100, Width = 120, DialogResult = DialogResult.OK };
+                    Form dialogo = new Form() { Width = 450, Height = 250, Text = "Selecione o Destino dos Dados", StartPosition = FormStartPosition.CenterScreen };
+                    ComboBox cmbFluxo = new ComboBox() { Left = 20, Top = 25, Width = 400, DropDownStyle = ComboBoxStyle.DropDownList };
+                    cmbFluxo.Items.AddRange(new string[] { "1 - PASSANTES", "2 - INADIMPLENTES", "3 - DAER Não Filtrado", "4 - REJEITADOS DAER", "5 - DAER", "6 - PAGAMENTOS", "7 - MODO LIVRE (Edição Manual)" });
+                    cmbFluxo.SelectedIndex = 6;
+                    Button btnConfirmar = new Button() { Text = "Confirmar Importação", Left = 130, Top = 100, Width = 180, Height = 40, DialogResult = DialogResult.OK };
                     dialogo.Controls.AddRange(new Control[] { cmbFluxo, btnConfirmar });
 
                     if (dialogo.ShowDialog() == DialogResult.OK)
                     {
-                        TravarInterface(true); _lblStatus.Text = "Lendo arquivo CSV...";
-
+                        TravarInterface(true);
                         try
                         {
                             if (cmbFluxo.SelectedIndex == 6)
@@ -179,10 +224,7 @@ namespace CSV_GeradorEEditor
                                 }
                             }
                         }
-                        catch (Exception ex)
-                        {
-                            MessageBox.Show($"O arquivo não tem as colunas padrão.\n\nDetalhes: {ex.Message}", "Erro");
-                        }
+                        catch (Exception ex) { MessageBox.Show("Erro na estrutura do arquivo: " + ex.Message); }
                         TravarInterface(false);
                     }
                 }
@@ -191,7 +233,7 @@ namespace CSV_GeradorEEditor
 
         private async void BtnExportar_Click(object sender, EventArgs e)
         {
-            if (_listaAtualExibicao == null && _dadosLivres == null) { MessageBox.Show("Não há dados para exportar."); return; }
+            if (_listaAtualExibicao == null && _dadosLivres == null) return;
 
             using (SaveFileDialog sfd = new SaveFileDialog() { Filter = "CSV|*.csv", FileName = _nomeArquivoSugerido })
             {
@@ -199,13 +241,9 @@ namespace CSV_GeradorEEditor
                 {
                     bool usarCabecalho = _chkComCabecalho.Checked;
                     string caminho = sfd.FileName;
+                    TravarInterface(true);
 
-                    TravarInterface(true); _lblStatus.Text = "Exportando exatamente como visualizado...";
-
-                    // Captura a ordem visual que o usuário definiu na tela
-                    var colunasGrid = _dataGridView.Columns.Cast<DataGridViewColumn>()
-                                        .OrderBy(c => c.DisplayIndex).ToList();
-
+                    var colunasGrid = _dataGridView.Columns.Cast<DataGridViewColumn>().OrderBy(c => c.DisplayIndex).ToList();
                     List<string> cabecalhos = colunasGrid.Select(c => c.HeaderText).ToList();
 
                     await Task.Run(() =>
@@ -224,8 +262,7 @@ namespace CSV_GeradorEEditor
                                         if (prop != null)
                                         {
                                             var val = prop.GetValue(item);
-                                            if (val is double d) linha[i] = d.ToString(CultureInfo.InvariantCulture);
-                                            else linha[i] = val?.ToString() ?? "";
+                                            linha[i] = val is double d ? d.ToString(CultureInfo.InvariantCulture) : val?.ToString() ?? "";
                                         }
                                     }
                                     yield return linha;
@@ -239,98 +276,109 @@ namespace CSV_GeradorEEditor
                                     string[] linha = new string[colunasGrid.Count];
                                     for (int i = 0; i < colunasGrid.Count; i++)
                                     {
-                                        int oIdx = indexMap[i];
-                                        linha[i] = (oIdx >= 0 && oIdx < item.Length) ? item[oIdx] : "";
+                                        int idx = indexMap[i];
+                                        linha[i] = (idx >= 0 && idx < item.Length) ? item[idx] : "";
                                     }
                                     yield return linha;
                                 }
                             }
                         }
-
                         _csvService.ExportarMatriz(cabecalhos, ObterLinhas(), caminho, usarCabecalho);
                     });
 
                     TravarInterface(false);
-                    MessageBox.Show("Arquivo editado exportado com sucesso!");
+                    MessageBox.Show("Arquivo exportado com sucesso.");
                 }
             }
         }
 
-        // --- FILTRAGEM POR PERÍODO ---
+        // --- FILTRAGEM E RECORTE (APENAS FLUXO PADRÃO) ---
 
         private async void BtnFiltrar_Click(object sender, EventArgs e)
         {
-            if (_listaAtualExibicao == null && _dadosLivres == null) return;
-            if (_cmbColunaData.SelectedItem == null) { MessageBox.Show("Selecione uma coluna de data."); return; }
+            if (_modoEdicaoLivre) return; // Segurança extra
+            if (_listaAtualExibicao == null) return;
+            if (_cmbColunaData.SelectedItem == null) { MessageBox.Show("Selecione a coluna de data."); return; }
 
             string nomeColunaGrid = _cmbColunaData.SelectedItem.ToString();
             string nomeColunaOriginal = _dataGridView.Columns.Cast<DataGridViewColumn>().First(c => c.HeaderText == nomeColunaGrid).Name;
 
+            if (!ValidarSeColunaEData(nomeColunaOriginal))
+            {
+                MessageBox.Show("Ops! Essa coluna não é do tipo Data.", "Aviso", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
             DateTime inicio = _dtpInicio.Value.Date;
             DateTime fim = _dtpFim.Value.Date;
 
-            TravarInterface(true); _lblStatus.Text = "Recortando por período...";
+            TravarInterface(true);
+
+            List<RegistroPagamento> pagamentosFiltrados = null;
+            List<RegistroPassante> passantesFiltrados = null;
+            System.Collections.IList listaFiltradaExibicao = null;
 
             await Task.Run(() =>
             {
-                if (_modoEdicaoLivre)
+                if (_listaAtualExibicao is List<RegistroPagamento> lpag)
                 {
-                    int oIdx = _colunasLivres.IndexOf(nomeColunaOriginal);
-                    _dadosLivres = _dadosLivres.AsParallel().Where(linha =>
-                    {
-                        if (oIdx >= 0 && oIdx < linha.Length)
-                        {
-                            if (DateTime.TryParseExact(linha[oIdx], "dd/MM/yyyy", null, DateTimeStyles.None, out DateTime dt))
-                                return dt >= inicio && dt <= fim;
-                        }
-                        return false;
-                    }).ToList();
+                    pagamentosFiltrados = _processadorService.FiltrarPorData(lpag, nomeColunaOriginal, inicio, fim);
+                    listaFiltradaExibicao = pagamentosFiltrados;
                 }
-                else
+                else if (_listaAtualExibicao is List<RegistroPassante> lpass)
                 {
-                    if (_listaAtualExibicao is List<RegistroPagamento> lpag)
-                    {
-                        _pagamentos = _processadorService.FiltrarPorData(lpag, nomeColunaOriginal, inicio, fim);
-                        _listaAtualExibicao = _pagamentos;
-                    }
-                    else if (_listaAtualExibicao is List<RegistroPassante> lpass)
-                    {
-                        var filtrado = _processadorService.FiltrarPorData(lpass, nomeColunaOriginal, inicio, fim);
-                        if (_nomeArquivoSugerido == "PASSANTES.csv") _passantes = filtrado;
-                        else if (_nomeArquivoSugerido == "INADIMPLENTES.csv") _inadimplentes = filtrado;
-                        else if (_nomeArquivoSugerido == "DAERnaoFiltrado.csv") _daerNaoFiltrado = filtrado;
-                        else if (_nomeArquivoSugerido == "REJEITADOSDAER.csv") _rejeitados = filtrado;
-                        else if (_nomeArquivoSugerido == "DAER.csv") _daer = filtrado;
-                        _listaAtualExibicao = filtrado;
-                    }
+                    passantesFiltrados = _processadorService.FiltrarPorData(lpass, nomeColunaOriginal, inicio, fim);
+                    listaFiltradaExibicao = passantesFiltrados;
                 }
             });
 
-            _dataGridView.RowCount = _modoEdicaoLivre ? _dadosLivres.Count : ((System.Collections.IList)_listaAtualExibicao).Count;
+            _listaAtualExibicao = listaFiltradaExibicao;
+            if (pagamentosFiltrados != null) _pagamentos = pagamentosFiltrados;
+            if (passantesFiltrados != null) AtualizarReferenciaFluxo(passantesFiltrados);
+            _dataGridView.RowCount = listaFiltradaExibicao.Count;
+
             _dataGridView.Invalidate();
             TravarInterface(false);
-            MessageBox.Show("Filtro aplicado.");
+            MessageBox.Show("Recorte aplicado com sucesso.", "Filtro");
         }
 
-        // --- GRID: VIRTUAL MODE TOTAL E EDIÇÕES ---
-
-        private void ConfigurarExibicaoLivre()
+        private bool ValidarSeColunaEData(string nomeColunaOriginal)
         {
-            _listaAtualExibicao = null;
-            _dataGridView.Columns.Clear();
-            foreach (var col in _colunasLivres) _dataGridView.Columns.Add(col, col);
-            _dataGridView.RowCount = _dadosLivres.Count;
-            _dataGridView.Invalidate();
-            HabilitarModoLivre(true);
-            AtualizarColunasDeFiltro();
+            if (_listaAtualExibicao is System.Collections.IList lista)
+            {
+                if (lista.Count == 0) return true;
+                var prop = _propriedadesAtuais.FirstOrDefault(p => p.Name == nomeColunaOriginal);
+                if (prop != null)
+                {
+                    foreach (var item in lista)
+                    {
+                        var val = prop.GetValue(item)?.ToString();
+                        if (!string.IsNullOrWhiteSpace(val))
+                        {
+                            return DateTime.TryParseExact(val, "dd/MM/yyyy", null, DateTimeStyles.None, out _);
+                        }
+                    }
+                }
+            }
+            return false;
         }
+
+        private void AtualizarReferenciaFluxo(List<RegistroPassante> dados)
+        {
+            if (_nomeArquivoSugerido == "PASSANTES.csv") _passantes = dados;
+            else if (_nomeArquivoSugerido == "INADIMPLENTES.csv") _inadimplentes = dados;
+            else if (_nomeArquivoSugerido == "DAERnaoFiltrado.csv") _daerNaoFiltrado = dados;
+            else if (_nomeArquivoSugerido == "REJEITADOSDAER.csv") _rejeitados = dados;
+            else if (_nomeArquivoSugerido == "DAER.csv") _daer = dados;
+        }
+
+        // --- LÓGICA DA GRADE (VIRTUAL MODE) ---
 
         private void ConfigurarExibicao<T>(string nomeSugestao, List<T> dados)
         {
             _nomeArquivoSugerido = nomeSugestao;
             _listaAtualExibicao = dados;
 
-            // Solução para obrigar a herança a ficar em ordem:
             if (typeof(T) == typeof(RegistroPagamento))
             {
                 var baseProps = typeof(RegistroPassante).GetProperties();
@@ -341,10 +389,21 @@ namespace CSV_GeradorEEditor
 
             _dataGridView.Columns.Clear();
             foreach (var prop in _propriedadesAtuais) _dataGridView.Columns.Add(prop.Name, prop.Name);
-
             _dataGridView.RowCount = dados.Count;
             _dataGridView.Invalidate();
             AtualizarColunasDeFiltro();
+            AtualizarContadorRodape();
+        }
+
+        private void ConfigurarExibicaoLivre()
+        {
+            _listaAtualExibicao = null;
+            _dataGridView.Columns.Clear();
+            foreach (var col in _colunasLivres) _dataGridView.Columns.Add(col, col);
+            _dataGridView.RowCount = _dadosLivres.Count;
+            _dataGridView.Invalidate();
+            HabilitarModoLivre(true);
+            AtualizarContadorRodape();
         }
 
         private void DataGridView_CellValueNeeded(object sender, DataGridViewCellValueEventArgs e)
@@ -359,8 +418,7 @@ namespace CSV_GeradorEEditor
             else if (_dadosLivres != null)
             {
                 int oIdx = _colunasLivres.IndexOf(_dataGridView.Columns[e.ColumnIndex].Name);
-                var linha = _dadosLivres[e.RowIndex];
-                if (oIdx >= 0 && oIdx < linha.Length) e.Value = linha[oIdx];
+                if (oIdx >= 0 && oIdx < _dadosLivres[e.RowIndex].Length) e.Value = _dadosLivres[e.RowIndex][oIdx];
             }
         }
 
@@ -379,15 +437,13 @@ namespace CSV_GeradorEEditor
             else if (_dadosLivres != null)
             {
                 int oIdx = _colunasLivres.IndexOf(_dataGridView.Columns[e.ColumnIndex].Name);
-                var linha = _dadosLivres[e.RowIndex];
-                if (oIdx >= linha.Length) { Array.Resize(ref linha, oIdx + 1); _dadosLivres[e.RowIndex] = linha; }
-                if (oIdx >= 0) linha[oIdx] = e.Value?.ToString() ?? "";
+                if (oIdx >= 0) _dadosLivres[e.RowIndex][oIdx] = e.Value?.ToString() ?? "";
             }
         }
 
-        private void DataGridView_KeyDown(object sender, KeyEventArgs e)
+        private void ExcluirLinhasSelecionadas()
         {
-            if (e.KeyCode == Keys.Delete && _dataGridView.SelectedRows.Count > 0)
+            if (_dataGridView.SelectedRows.Count > 0)
             {
                 var indices = _dataGridView.SelectedRows.Cast<DataGridViewRow>().Select(r => r.Index).OrderByDescending(i => i).ToList();
                 if (_listaAtualExibicao is System.Collections.IList lista)
@@ -401,6 +457,26 @@ namespace CSV_GeradorEEditor
                     _dataGridView.RowCount = _dadosLivres.Count;
                 }
                 _dataGridView.Invalidate();
+                AtualizarContadorRodape();
+            }
+        }
+
+        private void DataGridView_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.KeyCode == Keys.Delete) ExcluirLinhasSelecionadas();
+        }
+
+        private void DataGridView_RowHeaderMouseClick(object sender, DataGridViewCellMouseEventArgs e)
+        {
+            if (e.Button == MouseButtons.Right)
+            {
+                _dataGridView.ClearSelection();
+                _dataGridView.Rows[e.RowIndex].Selected = true;
+                ContextMenuStrip menu = new ContextMenuStrip();
+                var itemExcluir = new ToolStripMenuItem("Excluir Linha(s)");
+                itemExcluir.Click += (s, args) => ExcluirLinhasSelecionadas();
+                menu.Items.Add(itemExcluir);
+                menu.Show(Cursor.Position);
             }
         }
 
@@ -409,20 +485,13 @@ namespace CSV_GeradorEEditor
             if (e.Button == MouseButtons.Right)
             {
                 ContextMenuStrip menu = new ContextMenuStrip();
-
-                var itemRenomear = new ToolStripMenuItem("Renomear Coluna");
+                var itemRenomear = new ToolStripMenuItem("Renomear Coluna (Tornará um Título)");
                 itemRenomear.Click += (s, args) => {
-                    string novoNome = PromptTexto("Novo nome da coluna:", _dataGridView.Columns[e.ColumnIndex].HeaderText);
+                    string novoNome = PromptTexto("Novo nome:", _dataGridView.Columns[e.ColumnIndex].HeaderText);
                     if (!string.IsNullOrWhiteSpace(novoNome)) { AvisarBloqueioFluxo(); _dataGridView.Columns[e.ColumnIndex].HeaderText = novoNome; AtualizarColunasDeFiltro(); }
                 };
-
-                var itemRemover = new ToolStripMenuItem("Excluir Coluna (Ocultar)");
-                itemRemover.Click += (s, args) => {
-                    AvisarBloqueioFluxo();
-                    _dataGridView.Columns.RemoveAt(e.ColumnIndex); // Excluir a visualização é suficiente para o novo ExportarMatriz
-                    AtualizarColunasDeFiltro();
-                };
-
+                var itemRemover = new ToolStripMenuItem("Excluir Coluna");
+                itemRemover.Click += (s, args) => { AvisarBloqueioFluxo(); _dataGridView.Columns.RemoveAt(e.ColumnIndex); AtualizarColunasDeFiltro(); };
                 menu.Items.Add(itemRenomear); menu.Items.Add(itemRemover);
                 menu.Show(Cursor.Position);
             }
@@ -438,13 +507,13 @@ namespace CSV_GeradorEEditor
             e.Graphics.DrawString(rowIdx, font, SystemBrushes.ControlText, headerBounds, centerFormat);
         }
 
-        // --- UTILITÁRIOS E INTERFACE ---
+        // --- UTILITÁRIOS ---
 
         private void AvisarBloqueioFluxo()
         {
             if (!_modoEdicaoLivre)
             {
-                MessageBox.Show("Modificar colunas bloqueia a geração automática oficial.\nO programa alternará para MODO LIVRE (mantendo suas edições, permitindo salvar).", "Aviso", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show("Alterar a estrutura bloqueia a geração oficial das próximas etapas.\nEntrando em MODO LIVRE (você poderá editar e salvar normalmente).", "Aviso");
                 HabilitarModoLivre(true);
             }
         }
@@ -452,49 +521,75 @@ namespace CSV_GeradorEEditor
         private void HabilitarModoLivre(bool habilitar)
         {
             _modoEdicaoLivre = habilitar;
-            foreach (Control btn in _panelBotoesFluxo.Controls) { if (btn is Button b && b.Name.StartsWith("btnFluxo")) b.Enabled = !habilitar; }
+            foreach (Control btn in _panelBotoesFluxo.Controls)
+            {
+                if (btn is Button b && b.Name.StartsWith("btnFluxo")) b.Enabled = !habilitar;
+            }
+            _grpRecorte.Enabled = !habilitar;
             if (habilitar) _nomeArquivoSugerido = "ArquivoEditado.csv";
         }
 
-        private void AtualizarColunasDeFiltro()
+        private void AtualizarContadorRodape()
         {
-            _cmbColunaData.Items.Clear();
-            foreach (DataGridViewColumn col in _dataGridView.Columns)
-            {
-                if (col.HeaderText.ToUpper().Contains("DATA")) _cmbColunaData.Items.Add(col.HeaderText);
-            }
-            if (_cmbColunaData.Items.Count > 0) _cmbColunaData.SelectedIndex = 0;
+            int totalLinhasArquivo = _modoEdicaoLivre ? _dataGridView.RowCount : _dataGridView.RowCount + 1;
+            if (_dataGridView.RowCount == 0) totalLinhasArquivo = 0;
+            _lblStatus.Text = $"Arquivo com {totalLinhasArquivo:N0} linhas no total";
         }
 
         private void TravarInterface(bool processando)
         {
             _panelBotoesFluxo.Enabled = !processando;
-            if (!processando) { _progressBar.Value = 0; _lblStatus.Text = "Pronto. Linhas Carregadas: " + (_dataGridView.RowCount).ToString("N0"); }
-        }
-
-        private string PromptTexto(string titulo, string valorPadrao)
-        {
-            Form prompt = new Form() { Width = 300, Height = 150, Text = titulo, FormBorderStyle = FormBorderStyle.FixedDialog, StartPosition = FormStartPosition.CenterParent };
-            TextBox textBox = new TextBox() { Left = 20, Top = 20, Width = 240, Text = valorPadrao };
-            Button confirmation = new Button() { Text = "Ok", Left = 160, Width = 100, Top = 60, DialogResult = DialogResult.OK };
-            prompt.Controls.Add(textBox); prompt.Controls.Add(confirmation); prompt.AcceptButton = confirmation;
-            return prompt.ShowDialog() == DialogResult.OK ? textBox.Text : "";
-        }
-
-        private int SolicitarQuantidade(string titulo, int maximoGeral, int anterior)
-        {
-            string aviso = anterior > 0 ? $"O arquivo base possui {anterior:N0} linhas.\n" : "";
-            Form prompt = new Form() { Width = 400, Height = 200, FormBorderStyle = FormBorderStyle.FixedDialog, Text = "Definir Quantidade", StartPosition = FormStartPosition.CenterScreen };
-            Label textLabel = new Label() { Left = 20, Top = 10, Text = $"{aviso}{titulo}\n(Insira um valor entre 1 e {maximoGeral:N0}):", Width = 350, Height = 40 };
-            TextBox textBox = new TextBox() { Left = 20, Top = 60, Width = 340, Text = maximoGeral.ToString() };
-            Button confirmation = new Button() { Text = "Ok", Left = 260, Width = 100, Top = 100, DialogResult = DialogResult.OK };
-            prompt.Controls.Add(textLabel); prompt.Controls.Add(textBox); prompt.Controls.Add(confirmation); prompt.AcceptButton = confirmation;
-
-            if (prompt.ShowDialog() == DialogResult.OK)
+            if (!processando)
             {
-                if (int.TryParse(textBox.Text.Replace(".", ""), out int result) && result > 0 && result <= maximoGeral) return result;
-                MessageBox.Show($"Insira um número válido entre 1 e {maximoGeral:N0}.");
+                _progressBar.Value = 0;
+                AtualizarContadorRodape();
             }
+        }
+
+        private void AtualizarColunasDeFiltro()
+        {
+            if (_modoEdicaoLivre) return;
+
+            _cmbColunaData.Items.Clear();
+            foreach (DataGridViewColumn col in _dataGridView.Columns)
+            {
+                _cmbColunaData.Items.Add(col.HeaderText);
+            }
+
+            if (_cmbColunaData.Items.Count > 0)
+            {
+                int indexSelecionado = 0;
+                for (int i = 0; i < _cmbColunaData.Items.Count; i++)
+                {
+                    if (_cmbColunaData.Items[i].ToString().ToUpper().Contains("DATA"))
+                    {
+                        indexSelecionado = i;
+                        break;
+                    }
+                }
+                _cmbColunaData.SelectedIndex = indexSelecionado;
+            }
+        }
+
+        private string PromptTexto(string titulo, string padrao)
+        {
+            Form f = new Form() { Width = 350, Height = 150, Text = titulo, StartPosition = FormStartPosition.CenterParent };
+            TextBox t = new TextBox() { Left = 20, Top = 20, Width = 290, Text = padrao };
+            Button b = new Button() { Text = "Ok", Left = 210, Top = 60, Width = 100, DialogResult = DialogResult.OK };
+            f.Controls.Add(t); f.Controls.Add(b); f.AcceptButton = b;
+            return f.ShowDialog() == DialogResult.OK ? t.Text : "";
+        }
+
+        private int SolicitarQuantidade(string titulo, int max, int anterior)
+        {
+            int maxCalculado = anterior > 0 ? anterior : max;
+            string msg = anterior > 0 ? $"O arquivo base possui {anterior:N0} linhas.\n" : "";
+            Form p = new Form() { Width = 480, Height = 250, Text = "Quantidade", StartPosition = FormStartPosition.CenterScreen };
+            Label l = new Label() { Left = 20, Top = 15, Text = $"{msg}{titulo}\n(1 a {maxCalculado:N0}):", Width = 420, Height = 60 };
+            TextBox t = new TextBox() { Left = 20, Top = 85, Width = 420, Text = maxCalculado.ToString() };
+            Button c = new Button() { Text = "Ok", Left = 340, Top = 140, Width = 100, DialogResult = DialogResult.OK };
+            p.Controls.Add(l); p.Controls.Add(t); p.Controls.Add(c); p.AcceptButton = c;
+            if (p.ShowDialog() == DialogResult.OK && int.TryParse(t.Text.Replace(".", ""), out int res) && res > 0 && res <= maxCalculado) return res;
             return 0;
         }
 
@@ -505,57 +600,59 @@ namespace CSV_GeradorEEditor
             this.StartPosition = FormStartPosition.CenterScreen;
 
             _panelBotoesFluxo = new FlowLayoutPanel { Dock = DockStyle.Left, Width = 250, Padding = new Padding(10), FlowDirection = FlowDirection.TopDown, WrapContents = false };
-            Button btnPassantes = new Button { Name = "btnFluxo1", Text = "1. Gerar PASSANTES", Width = 220, Height = 40 }; btnPassantes.Click += BtnGerarPassantes_Click;
-            Button btnInadimplentes = new Button { Name = "btnFluxo2", Text = "2. Gerar INADIMPLENTES", Width = 220, Height = 40 }; btnInadimplentes.Click += BtnGerarInadimplentes_Click;
-            Button btnDaerNaoFiltrado = new Button { Name = "btnFluxo3", Text = "3. Gerar DAER Não Filtrado", Width = 220, Height = 40 }; btnDaerNaoFiltrado.Click += BtnGerarDaerNaoFiltrado_Click;
-            Button btnRejeitados = new Button { Name = "btnFluxo4", Text = "4. Gerar REJEITADOS DAER", Width = 220, Height = 40 }; btnRejeitados.Click += BtnGerarRejeitados_Click;
-            Button btnDaerFinal = new Button { Name = "btnFluxo5", Text = "5. Gerar DAER (Final)", Width = 220, Height = 40 }; btnDaerFinal.Click += BtnGerarDaerFinal_Click;
-            Button btnPagamentos = new Button { Name = "btnFluxo6", Text = "6. Gerar PAGAMENTOS", Width = 220, Height = 40 }; btnPagamentos.Click += BtnGerarPagamentos_Click;
+            string[] nomes = { "btnFluxo1|PASSANTES", "btnFluxo2|INADIMPLENTES", "btnFluxo3|DAER Não Filtrado", "btnFluxo4|REJEITADOS DAER", "btnFluxo5|DAER (Final)", "btnFluxo6|PAGAMENTOS" };
+            foreach (var n in nomes)
+            {
+                var parts = n.Split('|');
+                Button b = new Button { Name = parts[0], Text = parts[1], Width = 220, Height = 40 };
+                if (parts[0].EndsWith("1")) b.Click += BtnGerarPassantes_Click;
+                else if (parts[0].EndsWith("2")) b.Click += BtnGerarInadimplentes_Click;
+                else if (parts[0].EndsWith("3")) b.Click += BtnGerarDaerNaoFiltrado_Click;
+                else if (parts[0].EndsWith("4")) b.Click += BtnGerarRejeitados_Click;
+                else if (parts[0].EndsWith("5")) b.Click += BtnGerarDaerFinal_Click;
+                else b.Click += BtnGerarPagamentos_Click;
+                _panelBotoesFluxo.Controls.Add(b);
+            }
             _chkColunasVazias = new CheckBox { Text = "Gerar Pagamentos Vazios", Width = 220, Margin = new Padding(0, 10, 0, 5) };
-            Button btnPreencherPagamentos = new Button { Text = "Preencher Pagamentos Vazios", Width = 220, Height = 35 }; btnPreencherPagamentos.Click += BtnPreencherPagamentos_Click;
+            Button bPre = new Button { Text = "Preencher Colunas Vazias", Width = 220, Height = 35 }; bPre.Click += BtnPreencherPagamentos_Click;
 
-            _panelBotoesFluxo.Controls.AddRange(new Control[] { btnPassantes, btnInadimplentes, btnDaerNaoFiltrado, btnRejeitados, btnDaerFinal, btnPagamentos, _chkColunasVazias, btnPreencherPagamentos });
+            Button btnReset = new Button { Text = "🔄 Voltar ao Início (Limpar)", Width = 220, Height = 35, Margin = new Padding(0, 30, 0, 0) };
+            btnReset.Click += BtnReset_Click;
 
-            Panel panelTop = new Panel { Dock = DockStyle.Top, Height = 80, BorderStyle = BorderStyle.FixedSingle };
-            Button btnImportar = new Button { Text = "Importar CSV", Width = 120, Height = 35, Left = 10, Top = 10 }; btnImportar.Click += BtnImportar_Click;
-            Button btnExportar = new Button { Text = "Salvar CSV (Exportar)", Width = 150, Height = 35, Left = 140, Top = 10 }; btnExportar.Click += BtnExportar_Click;
-            _chkComCabecalho = new CheckBox { Text = "Exportar c/ Cabeçalho", Checked = true, Left = 300, Top = 18, Width = 150 };
+            _panelBotoesFluxo.Controls.Add(_chkColunasVazias);
+            _panelBotoesFluxo.Controls.Add(bPre);
+            _panelBotoesFluxo.Controls.Add(btnReset);
 
-            GroupBox grpRecorte = new GroupBox { Text = "Recorte por Período", Left = 480, Top = 5, Width = 550, Height = 65 };
+            Panel pTop = new Panel { Dock = DockStyle.Top, Height = 80, BorderStyle = BorderStyle.FixedSingle };
+            Button bImp = new Button { Text = "Importar CSV", Width = 110, Height = 35, Left = 10, Top = 10 }; bImp.Click += BtnImportar_Click;
+            Button bExp = new Button { Text = "Salvar/Exportar", Width = 130, Height = 35, Left = 130, Top = 10 }; bExp.Click += BtnExportar_Click;
+            _chkComCabecalho = new CheckBox { Text = "Exportar com a Linha nº 1 (Títulos)?", Checked = true, Left = 270, Top = 18, Width = 230 };
+
+            _grpRecorte = new GroupBox { Text = "Recorte por Período", Left = 510, Top = 5, Width = 550, Height = 65 };
             _cmbColunaData = new ComboBox { Left = 10, Top = 25, Width = 130, DropDownStyle = ComboBoxStyle.DropDownList };
             _dtpInicio = new DateTimePicker { Left = 150, Top = 25, Width = 110, Format = DateTimePickerFormat.Short };
             _dtpFim = new DateTimePicker { Left = 270, Top = 25, Width = 110, Format = DateTimePickerFormat.Short };
-            Button btnFiltrar = new Button { Text = "Aplicar Recorte", Left = 390, Top = 23, Width = 130, Height = 28 }; btnFiltrar.Click += BtnFiltrar_Click;
+            Button bFil = new Button { Text = "Aplicar Recorte", Left = 390, Top = 23, Width = 130, Height = 28 }; bFil.Click += BtnFiltrar_Click;
+            _grpRecorte.Controls.AddRange(new Control[] { _cmbColunaData, _dtpInicio, _dtpFim, bFil });
 
-            grpRecorte.Controls.AddRange(new Control[] { _cmbColunaData, _dtpInicio, _dtpFim, btnFiltrar });
-            panelTop.Controls.AddRange(new Control[] { btnImportar, btnExportar, _chkComCabecalho, grpRecorte });
+            pTop.Controls.AddRange(new Control[] { bImp, bExp, _chkComCabecalho, _grpRecorte });
 
-            Panel panelRodape = new Panel { Dock = DockStyle.Bottom, Height = 40 };
+            Panel pRod = new Panel { Dock = DockStyle.Bottom, Height = 40 };
             _progressBar = new ProgressBar { Left = 10, Top = 10, Width = 400, Height = 20 };
-            _lblStatus = new Label { Left = 420, Top = 12, Width = 600, Text = "Aguardando ação..." };
-            panelRodape.Controls.AddRange(new Control[] { _progressBar, _lblStatus });
+            _lblStatus = new Label { Left = 420, Top = 12, Width = 600, Text = "Pronto." };
+            pRod.Controls.AddRange(new Control[] { _progressBar, _lblStatus });
 
-            _dataGridView = new DataGridView
-            {
-                Dock = DockStyle.Fill,
-                VirtualMode = true,
-                AllowUserToAddRows = false,
-                AllowUserToDeleteRows = false,
-                AllowUserToOrderColumns = true,
-                EditMode = DataGridViewEditMode.EditOnKeystrokeOrF2,
-                BackgroundColor = Color.White,
-                RowHeadersWidth = 60
-            };
-
+            _dataGridView = new DataGridView { Dock = DockStyle.Fill, VirtualMode = true, AllowUserToAddRows = false, EditMode = DataGridViewEditMode.EditOnKeystrokeOrF2, BackgroundColor = Color.White, RowHeadersWidth = 60 };
             _dataGridView.CellValueNeeded += DataGridView_CellValueNeeded;
             _dataGridView.CellValuePushed += DataGridView_CellValuePushed;
             _dataGridView.KeyDown += DataGridView_KeyDown;
             _dataGridView.RowPostPaint += DataGridView_RowPostPaint;
             _dataGridView.ColumnHeaderMouseClick += DataGridView_ColumnHeaderMouseClick;
+            _dataGridView.RowHeaderMouseClick += DataGridView_RowHeaderMouseClick;
 
             this.Controls.Add(_dataGridView);
-            this.Controls.Add(panelTop);
-            this.Controls.Add(panelRodape);
+            this.Controls.Add(pTop);
+            this.Controls.Add(pRod);
             this.Controls.Add(_panelBotoesFluxo);
         }
     }
